@@ -1,0 +1,114 @@
+import com.atlassian.confluence.pages.Page
+import com.atlassian.confluence.pages.PageManager
+import com.atlassian.confluence.spaces.Space
+import com.atlassian.confluence.spaces.SpaceManager
+import com.atlassian.sal.api.component.ComponentLocator
+import org.apache.log4j.Logger
+import org.apache.log4j.Level
+import static org.apache.log4j.Level.DEBUG
+import com.atlassian.confluence.core.ContentPropertyManager
+import com.atlassian.confluence.event.events.content.page.PageEvent
+import com.atlassian.applinks.api.ApplicationLinkService
+import com.atlassian.applinks.api.application.jira.JiraApplicationType
+import com.atlassian.sal.api.net.Response
+import com.atlassian.sal.api.net.ResponseException
+import com.atlassian.sal.api.net.ResponseHandler
+import groovy.json.JsonBuilder
+import static com.atlassian.sal.api.net.Request.MethodType.POST
+import com.atlassian.confluence.core.ContentEntityObject;
+import com.atlassian.confluence.content.render.xhtml.ConversionContext;
+import groovy.json.JsonSlurper
+
+CONFLUENCE SCRİPTİNDE ISSUE YARATIP ONLARI LİNKLEME
+
+String className = "tr.com.veniture.Scripts.pageCreatedEvent"
+Logger log = Logger.getLogger(className)
+log.setLevel(Level.DEBUG)
+
+def page = event.getPage()
+def pageId = page.getId()
+log.error("PageId" + pageId)
+
+
+def parentPage1 = page.getParent()
+def parentPage2 = parentPage1.getParent()
+//def parentPage3 = parentPage2.getParent()
+//log.debug("ParentPage Title: "+parentPage2.title)
+if(parentPage1 != "NULL" && parentPage2 != "NULL")
+{
+
+def appLinkService = ComponentLocator.getComponent(ApplicationLinkService)
+def appLink = appLinkService.getPrimaryApplicationLink(JiraApplicationType) 
+def applicationLinkRequestFactory = appLink.createAuthenticatedRequestFactory()
+    
+    def body = new JsonBuilder([
+    fields: [ 
+              project    : [key: "VS"],
+              summary    : page.title,
+              description: "test",
+              issuetype  : [name: "Change"],
+        customfield_12308: parentPage1.title,
+       customfield_11617: parentPage2.title
+    ]
+       ]).toString()
+
+    def request = applicationLinkRequestFactory.createRequest(POST, "/rest/api/2/issue")
+    .addHeader("Content-Type", "application/json")
+    .setEntity(body)
+
+    request.execute(new ResponseHandler<Response>() { 
+    @Override
+    void handle(Response response) throws ResponseException {
+        if (response.statusCode != 201) {
+            log.error("Creating Jira issue failed: ${response.responseBodyAsString}")
+        }
+        
+        log.error("Response Body " + response.responseBodyAsString)
+        
+        JsonSlurper slurper = new JsonSlurper()
+        Map parsedJson = slurper.parseText(response.responseBodyAsString)
+        def issueKey = parsedJson.get('key')
+        def issueId = parsedJson.get('id')
+       
+       log.error("Response Issue Key " + issueKey)
+       log.error("Response Issue Id " + issueId)
+            
+        def remoteLinkInfo = new JsonBuilder([ 
+            
+                        
+                        id:  issueId,
+                        self : "https://jira.veniture.com.tr/rest/api/2/issue/${issueKey}/remotelink/${issueId}",
+                        globalId : "appId=cf149dce-b91c-30db-a590-e2d94be7cb7e&pageId=${pageId}",
+                        application:[
+                               type: 'com.atlassian.confluence',
+                               name: 'Confluence'
+            ],           
+                          relationship : 'Wiki Page',
+                          object: [
+                              url:"https://wiki.veniture.com.tr/pages/viewpage.action?pageId=${pageId}",
+                              title: 'Wiki Page'
+                              ]
+                              
+             ]).toString()
+    
+            
+
+    def addRemoteLink = applicationLinkRequestFactory.createRequest(POST, "/rest/api/latest/issue/${issueKey}/remotelink")
+    .addHeader("Content-Type", "application/json")
+    .setEntity(remoteLinkInfo);
+        
+         addRemoteLink.execute(new ResponseHandler<Response>() { 
+    @Override
+    void handle(Response response2) throws ResponseException {
+        if (response2.statusCode != 201) {
+            log.error("Creating issue link failed: ${response2.responseBodyAsString}")
+        }
+    
+  }
+})
+    
+    }
+   
+    })
+    
+}
